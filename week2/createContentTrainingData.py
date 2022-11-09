@@ -5,6 +5,7 @@ from tqdm import tqdm
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import pandas as pd 
 
 def transform_name(product_name):
     # IMPLEMENT
@@ -61,9 +62,16 @@ def _label_filename(filename):
 if __name__ == '__main__':
     files = glob.glob(f'{directory}/*.xml')
     print("Writing results to %s" % output_file)
+    labels_dicts = []
     with multiprocessing.Pool() as p:
         all_labels = tqdm(p.imap(_label_filename, files), total=len(files))
+        for label_list in all_labels:
+            for (cat, name) in label_list:
+                labels_dicts.append({'cat': cat, 'name': name})
+        df = pd.DataFrame(labels_dicts)
+        df = df.groupby('cat').filter(lambda x: len(x) >= min_products)
+        all_labels = list(df.itertuples(index=False, name=None))
+        # https://stackoverflow.com/questions/9758450/pandas-convert-dataframe-to-array-of-tuples
         with open(output_file, 'w') as output:
-            for label_list in all_labels:
-                for (cat, name) in label_list:
-                    output.write(f'__label__{cat} {name}\n')
+            for cat, name in all_labels:
+                output.write(f'__label__{cat} {name}\n')
