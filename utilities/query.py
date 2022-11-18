@@ -11,11 +11,16 @@ from urllib.parse import urljoin
 import pandas as pd
 import fileinput
 import logging
-
+import fasttext
+import nltk
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig(format='%(levelname)s:%(message)s')
+
+week3_model = fasttext.load_model("/workspace/datasets/fasttext/labeled.bin")
+category_threshold = 0.5
+stemmer = nltk.stem.PorterStemmer()
 
 # expects clicks and impressions to be in the row
 def create_prior_queries_from_group(
@@ -47,9 +52,20 @@ def create_prior_queries(doc_ids, doc_id_weights,
                 pass  # nothing to do in this case, it just means we can't find priors for this doc
     return click_prior_query
 
+def get_categories(query):
+    query = query.lower()
+    query = re.sub('[^a-zA-Z\d]', ' ', query)
+    query_tokens = query.split()
+    stemmed_tokens = [stemmer.stem(token) for token in query_tokens]
+    query = ' '.join(stemmed_tokens)
+    predictions, prob = week3_model.predict(query)
+    categories = [pred for i, pred in enumerate(predictions) if prob[i] >= category_threshold]
+    
+    return categories
+
 
 # Hardcoded query here.  Better to use search templates or other query config.
-def create_query(user_query, click_prior_query, filters, sort="_score", sortDir="desc", size=10, source=None):
+def create_query(user_query, click_prior_query, filters=[], sort="_score", sortDir="desc", size=10, source=None, categories=[], filter=False, boost=False):
     query_obj = {
         'size': size,
         "sort": [
@@ -186,11 +202,13 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
     return query_obj
 
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc"):
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", filter=False, boost=False):
     #### W3: classify the query
     #### W3: create filters and boosts
     # Note: you may also want to modify the `create_query` method above
-    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"])
+    categories = get_categories(user_query)
+    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir,
+                             source=["name", "shortDescription"], categories=categories, filter=filter, boost=boost)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -212,6 +230,10 @@ if __name__ == "__main__":
                          help='The OpenSearch port')
     general.add_argument('--user',
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
+    general.add_argument("--filter", default=False,
+                         help="Filter with the query categories")                                
+    general.add_argument("--boost", default=False,
+                         help="Boost with the query categories")
 
     args = parser.parse_args()
 
@@ -245,7 +267,7 @@ if __name__ == "__main__":
         query = line.rstrip()
         if query == "Exit":
             break
-        search(client=opensearch, user_query=query, index=index_name)
+        search(client=opensearch, user_query=query, index=index_name, filter=filter, boost=boost)
 
         print(query_prompt)
 
